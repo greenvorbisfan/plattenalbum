@@ -479,7 +479,6 @@ class MPRISInterface:  # TODO emit Seeked if needed
 		for prop in ("CanGoNext","CanGoPrevious","CanPlay","CanPause","CanSeek","Shuffle"):
 			self._set_property(self._MPRIS_PLAYER_IFACE, prop, GLib.Variant("b", False))
 
-
 ######################
 # MPD client wrapper #
 ######################
@@ -1122,7 +1121,7 @@ class ListModel(GObject.Object, Gio.ListModel):
 	def do_get_n_items(self):
 		return len(self.data)
 
-class SelectionModel(ListModel, Gtk.SelectionModel):  # TODO
+class SelectionModel(ListModel, Gtk.SelectionModel):
 	__gsignals__={"selected": (GObject.SignalFlags.RUN_FIRST, None, (int,)),
 			"reselected": (GObject.SignalFlags.RUN_FIRST, None, ()),
 			"clear": (GObject.SignalFlags.RUN_FIRST, None, ())}
@@ -1180,9 +1179,7 @@ class SelectionModel(ListModel, Gtk.SelectionModel):  # TODO
 	def do_unselect_all(self): return False
 	def do_unselect_item(self, position): return False
 	def do_unselect_range(self, position, n_items): return False
-
-	def do_get_selection_in_range(self, position, n_items):  # TODO
-		return Gtk.Bitset.new_range(0, n_items)
+	def do_get_selection_in_range(self, position, n_items): return False
 
 	def do_is_selected(self, position):
 		return position == self._selected
@@ -1289,7 +1286,7 @@ class BrowserSongRow(SongRow):
 		self.song=song
 		self.set_song(song)
 
-class BrowserSongList(Gtk.ListBox):  # TODO Menu!
+class BrowserSongList(Gtk.ListBox):
 	def __init__(self, client):
 		super().__init__(selection_mode=Gtk.SelectionMode.NONE, valign=Gtk.Align.START)
 		self._client=client
@@ -2107,7 +2104,7 @@ class PlaylistView(SongList):
 			return point.y > widget.get_height()/2
 		return False
 
-	def _on_drop(self, drop_target, value, x, y):  # TODO
+	def _on_drop(self, drop_target, value, x, y):
 		item=self.pick(x,y,Gtk.PickFlags.DEFAULT)
 		if isinstance(value, int):
 			if item is not self:
@@ -2401,7 +2398,6 @@ class PlaybackControls(Gtk.Box):
 		controller_motion=Gtk.EventControllerMotion()
 		self._scale.add_controller(controller_motion)
 
-
 		# connect
 		self._scale.connect("change-value", self._on_change_value)
 		controller_motion.connect("motion", self._on_pointer_motion)
@@ -2446,7 +2442,6 @@ class PlaybackControls(Gtk.Box):
 		if (scroll == Gtk.ScrollType.STEP_BACKWARD or scroll == Gtk.ScrollType.STEP_FORWARD or
 			scroll == Gtk.ScrollType.PAGE_BACKWARD or scroll == Gtk.ScrollType.PAGE_FORWARD or
 			scroll == Gtk.ScrollType.JUMP):
-			self._client.seekcur(value)
 			duration=self._adjustment.get_upper()
 			current_pos=self._scale.get_value()
 			if value >= duration:
@@ -2459,7 +2454,7 @@ class PlaybackControls(Gtk.Box):
 				self._popover.popdown()
 			else:
 				pos=value
-			if abs(current_pos-pos) > 0.1:
+			if abs(current_pos-pos) > 1:
 				try:
 					self._client.seekcur(pos)
 				except:
@@ -2845,11 +2840,6 @@ class MainWindow(Adw.ApplicationWindow):
 			self.add_action(action)
 		self.add_action(Gio.PropertyAction.new("toggle-lyrics", player, "show-lyrics"))
 		self.add_action(Gio.PropertyAction.new("toggle-search", browser, "show-search"))
-
-		# search
-		# TODO see: https://gitlab.gnome.org/GNOME/gtk/-/issues/6874
-		# TODO this is not compatible with the A-B loop shortcut
-		#browser.search_entry.set_key_capture_widget(self)  # type to search
 
 		# sidebar layout
 		overlay_split_view=Adw.OverlaySplitView(
