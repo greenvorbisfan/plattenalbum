@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 #
 # Plattenalbum - MPD Client.
-# Copyright (C) 2020-2024 Martin Wagner <martin.wagner.dev@gmail.com>
+# Copyright (C) 2020-2025 Martin Wagner <martin.wagner.dev@gmail.com>
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -47,7 +47,7 @@ bindtextdomain("de.wagnermartin.Plattenalbum", localedir="@LOCALE_DIR@")
 textdomain("de.wagnermartin.Plattenalbum")
 Gio.Resource._register(Gio.resource_load(os.path.join("@RESOURCES_DIR@", "de.wagnermartin.Plattenalbum.gresource")))
 
-FALLBACK_COVER="media-optical"
+FALLBACK_COVER=Gdk.Paintable.new_empty(1, 1)
 
 ############################
 # decorators and functions #
@@ -565,7 +565,7 @@ class BinaryCover(bytes):
 		try:
 			paintable=Gdk.Texture.new_from_bytes(GLib.Bytes.new(self))
 		except gi.repository.GLib.Error:  # load fallback if cover can't be loaded
-			paintable=lookup_icon(FALLBACK_COVER, 1024)
+			paintable=FALLBACK_COVER
 		return paintable
 
 class FileCover(str):
@@ -573,7 +573,7 @@ class FileCover(str):
 		try:
 			paintable=Gdk.Texture.new_from_filename(self)
 		except gi.repository.GLib.Error:  # load fallback if cover can't be loaded
-			paintable=lookup_icon(FALLBACK_COVER, 1024)
+			paintable=FALLBACK_COVER
 		return paintable
 
 class EventEmitter(GObject.Object):
@@ -1354,6 +1354,34 @@ class BrowserSongList(Gtk.ListBox):
 		if (row:=self.get_row_at_y(y)) is not None:
 			return Gdk.ContentProvider.new_for_value(row.get_child().song)
 
+class AlbumCover(Gtk.Widget):
+	def __init__(self):
+		super().__init__(hexpand=True)
+		self._picture=Gtk.Picture(css_classes=["cover", "frame"])
+		self._picture.set_parent(self)
+		self.connect("destroy", lambda *args: self._picture.unparent())
+
+	def do_get_request_mode(self):
+		return Gtk.SizeRequestMode.HEIGHT_FOR_WIDTH
+
+	def do_size_allocate(self, width, height, baseline):
+		self._picture.allocate(width, height, baseline, None)
+
+	def do_measure(self, orientation, for_size):
+		return (for_size, for_size, -1, -1)
+
+	def set_paintable(self, paintable):
+		if paintable.get_intrinsic_width()/paintable.get_intrinsic_height() >= 1:
+			self._picture.set_halign(Gtk.Align.FILL)
+			self._picture.set_valign(Gtk.Align.CENTER)
+		else:
+			self._picture.set_halign(Gtk.Align.CENTER)
+			self._picture.set_valign(Gtk.Align.FILL)
+		self._picture.set_paintable(paintable)
+
+	def set_alternative_text(self, alt_text):
+		self._picture.set_alternative_text(alt_text)
+
 ###########
 # browser #
 ###########
@@ -1551,48 +1579,31 @@ class Album(GObject.Object):
 		self.date=date
 		self.cover=None
 
-class SquareContainer(Gtk.Widget):
-	def __init__(self, child):
-		super().__init__(hexpand=True)
-		child.set_parent(self)
-		self.connect("destroy", lambda *args: child.unparent())
-
-	def do_get_request_mode(self):
-		return Gtk.SizeRequestMode.HEIGHT_FOR_WIDTH
-
-	def do_size_allocate(self, width, height, baseline):
-		self.get_first_child().allocate(width, height, baseline, None)
-
-	def do_measure(self, orientation, for_size):
-		return (for_size, for_size, -1, -1)
-
 class AlbumListRow(Gtk.Box):
 	def __init__(self, client):
 		super().__init__(orientation=Gtk.Orientation.VERTICAL)
 		self._client=client
-		self._cover=Gtk.Picture(margin_bottom=3)
-		square_container=SquareContainer(self._cover)
-		square_container.set_valign(Gtk.Align.START)
-		self._title=Gtk.Label(single_line_mode=True, ellipsize=Pango.EllipsizeMode.END, css_classes=["heading"])
+		self._cover=AlbumCover()
+		self._title=Gtk.Label(single_line_mode=True, ellipsize=Pango.EllipsizeMode.END, margin_top=3, css_classes=["heading"])
 		self._date=Gtk.Label(single_line_mode=True, css_classes=["dim-label", "caption"])
-		self.append(square_container)
+		self.append(self._cover)
 		self.append(self._title)
 		self.append(self._date)
 
 	def set_album(self, album):
 		if album.name:
 			self._title.set_text(album.name)
-			self._cover.update_property([Gtk.AccessibleProperty.LABEL], [_("Album cover of {album}").format(album=album.name)])
+			self._cover.set_alternative_text(_("Album cover of {album}").format(album=album.name))
 		else:
 			self._title.set_markup(f'<i>{GLib.markup_escape_text(_("Unknown Album"))}</i>')
-			self._cover.update_property([Gtk.AccessibleProperty.LABEL], [_("Album cover of an unknown album")])
+			self._cover.set_alternative_text(_("Album cover of an unknown album"))
 		self._date.set_text(album.date)
 		if album.cover is None:
 			self._client.tagtypes("clear")
 			song=self._client.find("albumartist", album.artist, "album", album.name, "date", album.date, "window", "0:1")[0]
 			self._client.tagtypes("all")
 			if (cover:=self._client.get_cover(song["file"])) is None:
-				album.cover=lookup_icon(FALLBACK_COVER, 1024)
+				album.cover=FALLBACK_COVER
 			else:
 				album.cover=cover.get_paintable()
 		self._cover.set_paintable(album.cover)
@@ -1694,11 +1705,11 @@ class AlbumPage(Adw.NavigationPage):
 			header_bar.pack_end(button)
 
 		# cover
-		album_cover=Gtk.Image(width_request=200, height_request=200)
+		album_cover=AlbumCover()
 
 		# packing
 		box=Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=30, margin_start=12, margin_end=12, margin_top=24, margin_bottom=24)
-		box.append(album_cover)
+		box.append(Adw.Clamp(child=album_cover, maximum_size=200))
 		box.append(Adw.Clamp(child=song_list))
 		self._scroll=Gtk.ScrolledWindow(child=box)#, vexpand=True)
 		self._scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
@@ -1710,19 +1721,19 @@ class AlbumPage(Adw.NavigationPage):
 		if album:
 			self.set_title(album)
 			window_title.set_title(album)
-			album_cover.update_property([Gtk.AccessibleProperty.LABEL], [_("Album cover of {album}").format(album=album)])
+			album_cover.set_alternative_text(_("Album cover of {album}").format(album=album))
 		else:
 			self.set_title(_("Unknown Album"))
 			window_title.set_title(_("Unknown Album"))
-			album_cover.update_property([Gtk.AccessibleProperty.LABEL], [_("Album cover of an unknown album")])
+			album_cover.set_alternative_text(_("Album cover of an unknown album"))
 		window_title.set_subtitle(" • ".join(filter(None, (date, str(Duration(client.count(*tag_filter)["playtime"]))))))
 		client.restrict_tagtypes("track", "title", "artist")
 		songs=client.find(*tag_filter)
 		client.tagtypes("all")
 		if (cover:=client.get_cover(songs[0]["file"])) is None:
-			album_cover.set_from_paintable(lookup_icon(FALLBACK_COVER, 1024))
+			album_cover.set_paintable(FALLBACK_COVER)
 		else:
-			album_cover.set_from_paintable(cover.get_paintable())
+			album_cover.set_paintable(cover.get_paintable())
 		for song in songs:
 			row=BrowserSongRow(song)
 			song_list.append(row)
@@ -2305,7 +2316,7 @@ class LyricsWindow(Gtk.Stack):
 class MainCover(Gtk.Picture):
 	def __init__(self, client):
 		super().__init__()
-		self.update_property([Gtk.AccessibleProperty.LABEL], [_("Current album cover")])
+		self.set_alternative_text(_("Current album cover"))
 		self._client=client
 
 		# connect
@@ -2313,7 +2324,7 @@ class MainCover(Gtk.Picture):
 		self._client.emitter.connect("disconnected", self._on_disconnected)
 
 	def _clear(self):
-		self.set_paintable(lookup_icon(FALLBACK_COVER, 1024))
+		self.set_paintable(FALLBACK_COVER)
 
 	def _refresh(self, *args):
 		if self._client.current_cover is None:
@@ -2576,7 +2587,7 @@ class Player(Adw.Bin):
 		playback_controls=PlaybackControls(client, settings)
 
 		# stack
-		self._stack=Gtk.Stack()
+		self._stack=Gtk.Stack(visible=False)
 		self._stack.add_named(window_handle, "cover")
 		self._stack.add_named(self._lyrics_window, "lyrics")
 
@@ -2596,7 +2607,7 @@ class Player(Adw.Bin):
 		box=Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
 		box.append(self._stack)
 		box.append(playlist_window)
-		self._toolbar_view=Adw.ToolbarView()
+		self._toolbar_view=Adw.ToolbarView(reveal_bottom_bars=False)
 		self._toolbar_view.add_top_bar(header_bar)
 		self._toolbar_view.set_content(box)
 		self._toolbar_view.add_bottom_bar(playback_controls)
@@ -2617,11 +2628,13 @@ class Player(Adw.Bin):
 
 	def _on_song_changed(self, emitter, song, songid, state):
 		if (song:=self._client.currentsong()):
+			self._stack.set_visible(True)
 			self._title.set_title(song["title"][0])
 			self._title.set_subtitle(str(song["artist"]))
 			if self.get_property("show-lyrics"):
 				self._lyrics_window.display(song)
 		else:
+			self._stack.set_visible(False)
 			self._clear_title()
 			if self.get_property("show-lyrics"):
 				self._lyrics_window.clear()
@@ -2714,9 +2727,10 @@ class MPDActionGroup(Gio.SimpleActionGroup):
 
 		# actions
 		self._disable_on_stop_data=["next","prev","seek-forward","seek-backward","a-b-loop"]
-		self._disable_no_song=["tidy","enqueue"]
-		self._enable_on_reconnect_data=["toggle-play","stop","clear","update","disconnect"]
-		self._data=self._disable_on_stop_data+self._disable_no_song+self._enable_on_reconnect_data
+		self._disable_no_song_data=["tidy","enqueue"]
+		self._enable_disable_on_playlist_data=["toggle-play","clear"]
+		self._enable_on_reconnect_data=["stop","update","disconnect"]
+		self._data=self._disable_on_stop_data+self._disable_no_song_data+self._enable_on_reconnect_data+self._enable_disable_on_playlist_data
 		for name in self._data:
 			action=Gio.SimpleAction.new(name, None)
 			action.connect("activate", getattr(self, ("_on_"+name.replace("-","_"))))
@@ -2736,6 +2750,7 @@ class MPDActionGroup(Gio.SimpleActionGroup):
 		# connect
 		self._client.emitter.connect("state", self._on_state)
 		self._client.emitter.connect("current-song", self._on_song_changed)
+		self._client.emitter.connect("playlist", self._on_playlist_changed)
 		self._client.emitter.connect("disconnected", self._on_disconnected)
 		self._client.emitter.connect("connected", self._on_connected)
 
@@ -2796,8 +2811,12 @@ class MPDActionGroup(Gio.SimpleActionGroup):
 			self.lookup_action(action).set_enabled(state_dict[state])
 
 	def _on_song_changed(self, emitter, song, songid, state):
-		for action in self._disable_no_song:
+		for action in self._disable_no_song_data:
 			self.lookup_action(action).set_enabled(song is not None)
+
+	def _on_playlist_changed(self, emitter, version, length, song_pos):
+		for action in self._enable_disable_on_playlist_data:
+			self.lookup_action(action).set_enabled(length > 0)
 
 	def _on_disconnected(self, *args):
 		self._connect_action.set_enabled(True)
@@ -2984,21 +3003,26 @@ class MainWindow(Adw.ApplicationWindow):
 	def _on_song_changed(self, emitter, song, songid, state):
 		if (song:=self._client.currentsong()):
 			self.set_title(song["title"][0])
-			if self._settings.get_boolean("send-notify"):
-				if not self.is_active() and state == "play":
-					notify=Gio.Notification()
-					notify.set_title(_("Next Title is Playing"))
-					if artist:=song["artist"]:
-						body=_("Now playing “{title}” by “{artist}”").format(title=song["title"][0], artist=str(artist))
-					else:
-						body=_("Now playing “{title}”").format(title=song["title"][0])
-					notify.set_body(body)
-					self.get_application().send_notification("title-change", notify)
+			if self._settings.get_boolean("send-notify") and not self.is_active() and state == "play":
+				notify=Gio.Notification()
+				notify.set_title(_("Next Title is Playing"))
+				if artist:=song["artist"]:
+					body=_("Now playing “{title}” by “{artist}”").format(title=song["title"][0], artist=str(artist))
 				else:
-					self.get_application().withdraw_notification("title-change")
+					body=_("Now playing “{title}”").format(title=song["title"][0])
+				notify.set_body(body)
+				self.get_application().send_notification("title-change", notify)
+			else:
+				self.get_application().withdraw_notification("title-change")
 		else:
 			self._clear_title()
-			self.get_application().withdraw_notification("title-change")
+			if self._settings.get_boolean("send-notify") and not self.is_active():
+				notify=Gio.Notification()
+				notify.set_title(_("Playback Finished"))
+				notify.set_body(_("The playlist is over"))
+				self.get_application().send_notification("title-change", notify)
+			else:
+				self.get_application().withdraw_notification("title-change")
 
 	def _on_connected(self, *args):
 		if (dialog:=self.get_visible_dialog()) is not None:
@@ -3103,7 +3127,7 @@ class Plattenalbum(Adw.Application):
 
 	def _on_about(self, *args):
 		dialog=Adw.AboutDialog.new_from_appdata("/de/wagnermartin/Plattenalbum/de.wagnermartin.Plattenalbum.metainfo.xml")
-		dialog.set_copyright("© 2020-2024 Martin Wagner")
+		dialog.set_copyright("© 2020-2025 Martin Wagner")
 		dialog.set_developers(["Martin Wagner <martin.wagner.dev@gmail.com>"])
 		dialog.set_translator_credits(_("translator-credits"))
 		dialog.present(self._window)
